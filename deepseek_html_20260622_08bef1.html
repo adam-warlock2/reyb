@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ноутбук Шоп</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Шапка -->
+        <header>
+            <div class="container header-container">
+                <h1>💻 Ноутбук Шоп</h1>
+                <nav>
+                    <button class="nav-btn active" data-page="catalog">Каталог</button>
+                    <button class="nav-btn" data-page="cart">Корзина (<span id="cart-count">0</span>)</button>
+                    <button id="auth-btn" class="nav-btn">Войти</button>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Основной контент -->
+        <main class="container">
+            <!-- Каталог -->
+            <section id="page-catalog" class="page active">
+                <h2>Наши ноутбуки</h2>
+                <div id="product-list" class="product-grid"></div>
+            </section>
+
+            <!-- Корзина -->
+            <section id="page-cart" class="page">
+                <h2>Ваша корзина</h2>
+                <div id="cart-items"></div>
+                <div id="cart-total"></div>
+            </section>
+
+            <!-- Авторизация -->
+            <section id="page-auth" class="page">
+                <div class="auth-container">
+                    <h2 id="auth-title">Вход</h2>
+                    <form id="auth-form">
+                        <div id="name-field" style="display: none;">
+                            <label for="auth-name">Имя:</label>
+                            <input type="text" id="auth-name" placeholder="Ваше имя">
+                        </div>
+                        <div>
+                            <label for="auth-email">Email:</label>
+                            <input type="email" id="auth-email" placeholder="user@example.com" required>
+                        </div>
+                        <div>
+                            <label for="auth-password">Пароль:</label>
+                            <input type="password" id="auth-password" placeholder="Минимум 6 символов" required>
+                        </div>
+                        <button type="submit" class="btn primary" id="auth-submit-btn">Войти</button>
+                        <p id="auth-toggle-text">
+                            Нет аккаунта? <a href="#" id="auth-toggle-link">Зарегистрироваться</a>
+                        </p>
+                    </form>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <div class="container">
+                <p>© 2026 Ноутбук Шоп. Все права защищены.</p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Подключаем Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
