@@ -1,0 +1,464 @@
+// =================================================
+// 1. ПОДКЛЮЧЕНИЕ К SUPABASE
+// =================================================
+
+// ⚠️ ВСТАВЬТЕ СВОИ ДАННЫЕ ИЗ НАСТРОЕК SUPABASE ⚠️
+const SUPABASE_URL = 'https://ваш-проект.supabase.co';
+const SUPABASE_ANON_KEY = 'ваш-anon-публичный-ключ';
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// =================================================
+// 2. ПОЛУЧЕНИЕ ССЫЛОК НА DOM-ЭЛЕМЕНТЫ
+// =================================================
+const productListEl = document.getElementById('product-list');
+const cartItemsEl = document.getElementById('cart-items');
+const cartTotalEl = document.getElementById('cart-total');
+const cartCountEl = document.getElementById('cart-count');
+
+const authBtn = document.getElementById('auth-btn');
+const authForm = document.getElementById('auth-form');
+const authTitle = document.getElementById('auth-title');
+const authSubmitBtn = document.getElementById('auth-submit-btn');
+const authToggleLink = document.getElementById('auth-toggle-link');
+const authToggleText = document.getElementById('auth-toggle-text');
+const nameField = document.getElementById('name-field');
+const authNameInput = document.getElementById('auth-name');
+const authEmailInput = document.getElementById('auth-email');
+const authPasswordInput = document.getElementById('auth-password');
+
+const navBtns = document.querySelectorAll('.nav-btn');
+const pages = {
+    catalog: document.getElementById('page-catalog'),
+    cart: document.getElementById('page-cart'),
+    auth: document.getElementById('page-auth'),
+};
+
+// =================================================
+// 3. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+// =================================================
+let currentUser = null;
+let products = [];
+let cart = {};
+let currentPage = 'catalog';
+let isLoginMode = true;
+
+// =================================================
+// 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// =================================================
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container') || createToastContainer();
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+    return container;
+}
+
+function switchPage(pageName) {
+    Object.values(pages).forEach(page => page.classList.remove('active'));
+    if (pages[pageName]) pages[pageName].classList.add('active');
+    
+    navBtns.forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.querySelector(`.nav-btn[data-page="${pageName}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+
+    currentPage = pageName;
+    if (pageName === 'cart') renderCart();
+}
+
+// =================================================
+// 5. РАБОТА С ТОВАРАМИ
+// =================================================
+async function loadProducts() {
+    try {
+        const { data, error } = await supabase
+            .from('products')
+            .select('*')
+            .order('id');
+        
+        if (error) throw error;
+        products = data || [];
+        renderCatalog();
+    } catch (error) {
+        console.error('Ошибка загрузки товаров:', error);
+        showToast('Не удалось загрузить товары', 'error');
+    }
+}
+
+function renderCatalog() {
+    if (!productListEl) return;
+    if (products.length === 0) {
+        productListEl.innerHTML = '<p>Товары временно отсутствуют.</p>';
+        return;
+    }
+    
+    productListEl.innerHTML = products.map(product => `
+        <div class="product-card" data-id="${product.id}">
+            <img src="${product.image_url || 'https://via.placeholder.com/250x200?text=Ноутбук'}" alt="${product.name}">
+            <div class="product-info">
+                <h3>${product.name}</h3>
+                <p class="description">${product.description || ''}</p>
+                <div class="price">${product.price.toLocaleString()} ₽</div>
+                <button class="btn primary add-to-cart-btn" data-id="${product.id}">В корзину</button>
+            </div>
+        </div>
+    `).join('');
+
+    document.querySelectorAll('.add-to-cart-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const productId = parseInt(e.target.dataset.id);
+            addToCart(productId);
+        });
+    });
+}
+
+// =================================================
+// 6. РАБОТА С КОРЗИНОЙ
+// =================================================
+async function addToCart(productId) {
+    if (!currentUser) {
+        showToast('Пожалуйста, войдите, чтобы добавить товар в корзину.', 'info');
+        switchPage('auth');
+        return;
+    }
+
+    try {
+        // Проверяем, есть ли уже товар в корзине
+        const { data: existing, error: checkError } = await supabase
+            .from('carts')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .eq('product_id', productId)
+            .single();
+
+        if (checkError && checkError.code !== 'PGRST116') throw checkError;
+
+        if (existing) {
+            // Обновляем количество
+            const { error: updateError } = await supabase
+                .from('carts')
+                .update({ quantity: existing.quantity + 1 })
+                .eq('id', existing.id);
+            if (updateError) throw updateError;
+        } else {
+            // Добавляем новый товар
+            const { error: insertError } = await supabase
+                .from('carts')
+                .insert({ user_id: currentUser.id, product_id: productId, quantity: 1 });
+            if (insertError) throw insertError;
+        }
+
+        showToast('Товар добавлен в корзину!', 'success');
+        await loadCart();
+    } catch (error) {
+        console.error('Ошибка добавления в корзину:', error);
+        showToast('Не удалось добавить товар', 'error');
+    }
+}
+
+async function loadCart() {
+    if (!currentUser) {
+        cart = {};
+        renderCart();
+        updateCartCount();
+        return;
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('carts')
+            .select('*')
+            .eq('user_id', currentUser.id);
+        
+        if (error) throw error;
+        
+        cart = {};
+        data.forEach(item => {
+            cart[item.product_id] = item.quantity;
+        });
+        
+        renderCart();
+        updateCartCount();
+    } catch (error) {
+        console.error('Ошибка загрузки корзины:', error);
+        showToast('Не удалось загрузить корзину', 'error');
+    }
+}
+
+function renderCart() {
+    if (!cartItemsEl || !cartTotalEl) return;
+    
+    const productIds = Object.keys(cart).map(Number);
+    if (productIds.length === 0) {
+        cartItemsEl.innerHTML = '<p>Корзина пуста. Добавьте товары из каталога.</p>';
+        cartTotalEl.innerHTML = '';
+        return;
+    }
+
+    let total = 0;
+    let html = '';
+    
+    productIds.forEach(id => {
+        const product = products.find(p => p.id === id);
+        if (!product) return;
+        const quantity = cart[id];
+        const subtotal = product.price * quantity;
+        total += subtotal;
+        
+        html += `
+            <div class="cart-item" data-id="${id}">
+                <div class="cart-item-info">
+                    <h4>${product.name}</h4>
+                    <span>${product.price.toLocaleString()} ₽ x ${quantity}</span>
+                    <span><strong>${subtotal.toLocaleString()} ₽</strong></span>
+                </div>
+                <div class="cart-item-actions">
+                    <button class="cart-decrease" data-id="${id}">-</button>
+                    <button class="cart-increase" data-id="${id}">+</button>
+                    <button class="btn danger cart-remove" data-id="${id}">Удалить</button>
+                </div>
+            </div>
+        `;
+    });
+    
+    cartItemsEl.innerHTML = html;
+    cartTotalEl.innerHTML = `<strong>Итого: <span>${total.toLocaleString()} ₽</span></strong>`;
+
+    // Обработчики кнопок корзины
+    document.querySelectorAll('.cart-increase').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            updateCartQuantity(id, 1);
+        });
+    });
+    document.querySelectorAll('.cart-decrease').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            updateCartQuantity(id, -1);
+        });
+    });
+    document.querySelectorAll('.cart-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            removeFromCart(id);
+        });
+    });
+}
+
+async function updateCartQuantity(productId, delta) {
+    if (!currentUser) return;
+    
+    try {
+        const currentQuantity = cart[productId] || 0;
+        const newQuantity = currentQuantity + delta;
+        
+        if (newQuantity <= 0) {
+            await removeFromCart(productId);
+            return;
+        }
+        
+        const { error } = await supabase
+            .from('carts')
+            .update({ quantity: newQuantity })
+            .eq('user_id', currentUser.id)
+            .eq('product_id', productId);
+        
+        if (error) throw error;
+        await loadCart();
+    } catch (error) {
+        console.error('Ошибка обновления корзины:', error);
+        showToast('Не удалось обновить корзину', 'error');
+    }
+}
+
+async function removeFromCart(productId) {
+    if (!currentUser) return;
+    if (!confirm('Удалить этот товар из корзины?')) return;
+    
+    try {
+        const { error } = await supabase
+            .from('carts')
+            .delete()
+            .eq('user_id', currentUser.id)
+            .eq('product_id', productId);
+        
+        if (error) throw error;
+        await loadCart();
+        showToast('Товар удален из корзины', 'info');
+    } catch (error) {
+        console.error('Ошибка удаления из корзины:', error);
+        showToast('Не удалось удалить товар', 'error');
+    }
+}
+
+function updateCartCount() {
+    if (!cartCountEl) return;
+    const count = Object.values(cart).reduce((sum, qty) => sum + qty, 0);
+    cartCountEl.textContent = count;
+}
+
+// =================================================
+// 7. АВТОРИЗАЦИЯ (SUPABASE AUTH)
+// =================================================
+function updateAuthUI(user) {
+    if (user) {
+        authBtn.textContent = 'Выйти';
+        authBtn.style.backgroundColor = '#dc3545';
+        if (currentPage === 'auth') switchPage('catalog');
+    } else {
+        authBtn.textContent = 'Войти';
+        authBtn.style.backgroundColor = '#28a745';
+        cart = {};
+        renderCart();
+        updateCartCount();
+    }
+}
+
+function toggleAuthMode() {
+    isLoginMode = !isLoginMode;
+    if (isLoginMode) {
+        authTitle.textContent = 'Вход';
+        authSubmitBtn.textContent = 'Войти';
+        authToggleText.innerHTML = 'Нет аккаунта? <a href="#" id="auth-toggle-link">Зарегистрироваться</a>';
+        nameField.style.display = 'none';
+    } else {
+        authTitle.textContent = 'Регистрация';
+        authSubmitBtn.textContent = 'Зарегистрироваться';
+        authToggleText.innerHTML = 'Уже есть аккаунт? <a href="#" id="auth-toggle-link">Войти</a>';
+        nameField.style.display = 'block';
+    }
+    document.getElementById('auth-toggle-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleAuthMode();
+    });
+}
+
+async function handleAuthSubmit(e) {
+    e.preventDefault();
+    const email = authEmailInput.value.trim();
+    const password = authPasswordInput.value.trim();
+    const name = authNameInput.value.trim();
+
+    if (!email || !password) {
+        showToast('Заполните все обязательные поля', 'error');
+        return;
+    }
+    if (password.length < 6) {
+        showToast('Пароль должен быть не менее 6 символов', 'error');
+        return;
+    }
+
+    try {
+        if (isLoginMode) {
+            // Вход
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email,
+                password
+            });
+            if (error) throw error;
+            showToast('Добро пожаловать!', 'success');
+        } else {
+            // Регистрация
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    data: { full_name: name || 'Пользователь' }
+                }
+            });
+            if (error) throw error;
+            showToast('Регистрация успешна! Проверьте email для подтверждения.', 'success');
+        }
+        authForm.reset();
+        switchPage('catalog');
+    } catch (error) {
+        console.error('Ошибка авторизации:', error);
+        let message = 'Произошла ошибка';
+        switch (error.message) {
+            case 'Invalid login credentials': message = 'Неверный email или пароль'; break;
+            case 'User not found': message = 'Пользователь не найден'; break;
+            case 'Email not confirmed': message = 'Подтвердите email перед входом'; break;
+            default: message = error.message;
+        }
+        showToast(message, 'error');
+    }
+}
+
+// =================================================
+// 8. ОБРАБОТЧИКИ СОБЫТИЙ
+// =================================================
+
+// Навигация
+navBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const page = btn.dataset.page;
+        if (page === 'auth' && currentUser) {
+            supabase.auth.signOut();
+            return;
+        }
+        switchPage(page);
+    });
+});
+
+// Кнопка входа/выхода
+authBtn.addEventListener('click', () => {
+    if (currentUser) {
+        supabase.auth.signOut();
+    } else {
+        switchPage('auth');
+    }
+});
+
+// Форма авторизации
+authForm.addEventListener('submit', handleAuthSubmit);
+
+// Переключение режима
+document.getElementById('auth-toggle-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    toggleAuthMode();
+});
+
+// =================================================
+// 9. СЛУШАТЕЛЬ СОСТОЯНИЯ АВТОРИЗАЦИИ
+// =================================================
+supabase.auth.onAuthStateChange(async (event, session) => {
+    currentUser = session?.user || null;
+    updateAuthUI(currentUser);
+    
+    if (currentUser) {
+        await loadCart();
+    } else {
+        cart = {};
+        renderCart();
+        updateCartCount();
+        if (currentPage === 'cart' || currentPage === 'auth') {
+            switchPage('catalog');
+        }
+    }
+});
+
+// =================================================
+// 10. ЗАПУСК ПРИЛОЖЕНИЯ
+// =================================================
+async function initApp() {
+    // Проверяем текущую сессию
+    const { data: { session } } = await supabase.auth.getSession();
+    currentUser = session?.user || null;
+    updateAuthUI(currentUser);
+    
+    await loadProducts();
+    if (currentUser) {
+        await loadCart();
+    }
+    switchPage('catalog');
+}
+
+initApp().catch(console.error);
